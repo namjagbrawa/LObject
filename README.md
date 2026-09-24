@@ -1,20 +1,147 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# LObject
 
-# Run and deploy your AI Studio app
+**一个「万物皆对象」的个人数据系统原型。本地优先、P2P、对象类型可自定义。**
 
-This contains everything you need to run your app locally.
+> *A local-first, peer-to-peer personal data system where every thing is an object whose type you define yourself. This repository is a front-end prototype with a mocked backend.*
 
-View your app in AI Studio: https://ai.studio/apps/drive/1_EwVHYRfEQ9ZOjzp_NGhZnHQDL_ni42n
+---
 
-## Run Locally
+## ⚠️ 先说清楚这是什么
 
-**Prerequisites:**  Node.js
+**这是一个前端原型，不是能用的软件。**
 
+- 所有数据来自 `services/mockBackend.ts`，**没有真实后端、没有持久化**，刷新页面数据就回到初始状态
+- P2P、加密、云同步、脚本执行这些能力**目前只有界面，没有实现**
+- 它的价值在于**把一套设计完整地走了一遍**：概念模型、信息架构、模块划分、交互流程
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+如果你是来找一个能装的工具的——**它还不是**。如果你想看一套关于"个人数据该怎么组织"的设计，那它是完整的。
+
+---
+
+## 为什么做这个
+
+现在的个人数据是碎的：照片在一个 App 里，文档在另一个里，聊天记录在第三个里，每一个都有自己的账号、自己的云、自己的规矩。**东西是你的，但组织方式是别人定的，而且随时可能变。**
+
+LObject 想试的是另一种做法：
+
+- **万物皆对象。** 照片、文档、脚本、IoT 信号、视频，都是对象，区别只在于**类型定义**
+- **类型由你定义。** 不是系统给你几个固定分类，是你自己设计字段、方法和处理管道
+- **本地优先。** 数据默认在你自己的设备上，云和 P2P 是可选的扩展，不是前提
+- **组织方式与存储位置解耦。** 一个对象存在本地、P2P 网络还是某个云盘，不影响你怎么找到它
+
+---
+
+## 核心概念
+
+| 概念 | 是什么 |
+|---|---|
+| **Resource（对象）** | 系统里的基本单位。有类型、标签、版本、加密级别、存储位置 |
+| **ItemSchema（类型）** | 你自己定义的对象类型：字段（Text / Number / Boolean / Date / Reference / File）、方法、处理管道 |
+| **Space（空间）** | 对象的容身之处，可嵌套。分 `standard` / `hidden`（需密码）/ `system` |
+| **Facet + Tag（分面标签）** | 不是一堆平铺的标签，是**分面分类法**：先有「部门」「年份」这样的分面，每个分面下是树状标签。用物化路径（Materialized Path）存储，查询快 |
+| **Identity（身份）** | 基于公钥的身份，而不是账号密码 |
+
+### 存储位置有三种
+
+```
+Local       →  就在这台设备上
+IrohBlob    →  通过 Iroh 的 P2P blob 网络
+CloudRef    →  引用到某个云盘（OneDrive / 百度网盘 / S3 …）
+```
+
+**同一个对象换存储位置，不影响它在系统里的身份和组织关系。**
+
+---
+
+## 界面里有什么（14 个模块）
+
+**核心**
+- **空间浏览器** —— 对象的层级组织，支持隐藏空间
+- **系统状态** —— 网络、同步、存储的实时状况
+- **身份与继承** —— 见下面「几个刻意的设计」
+- **游离中心（市集）** —— 存储 / 算力 / 网络 / 服务 / 数据的发现与交换
+
+**工具**
+- **全局搜索** —— 跨空间、跨类型找对象
+- **标签分类体系** —— 分面和标签树的管理
+- **自定义视图** —— 用组件（文本 / 列表 / 统计 / 按钮）拼自己的页面
+
+**通讯**
+- **网络与会话** —— P2P 节点发现与聊天
+
+**系统**
+- **云端架构** —— 多个云盘聚合成一层存储
+- **自动化编排** —— 把对象方法串成管道
+- **类型设计器** —— 设计对象类型（最核心的一块）
+- **安全审计** —— 全部读写同步操作的日志
+
+---
+
+## 几个刻意的设计
+
+### 数字遗产继承
+
+`IdentityProfile` 里带一个继承配置：
+
+```ts
+inheritance: {
+  enabled: boolean;
+  triggerCondition: 'inactivity' | 'manual_dead_man_switch';
+  inactivityPeriodDays: number;
+  beneficiaryId: string;
+  status: 'active' | 'triggered';
+}
+```
+
+**一个本地优先的系统必须回答一个问题：人不在了，东西怎么办。**
+
+云服务有客服和工单，本地数据没有。所以设计里放了 dead man switch：长期无活动或手动触发后，数据移交给指定的受益人。
+
+### 类型的方法用 Rhai
+
+`SchemaMethod.code` 里存的是 [Rhai](https://rhai.rs/) 脚本——一门嵌入式脚本语言，设计上是为了嵌进 Rust 宿主里安全执行。**这是在为一个 Rust 后端留的位置。**
+
+### 分面分类，不是平铺标签
+
+大多数系统的标签是一个扁平列表，量一大就乱。这里是 `Facet → Tag 树 → Resource` 三层，标签用物化路径存，既能按分面筛，也能沿树查子孙。
+
+---
+
+## 技术栈
+
+React 18 · TypeScript 5 · Vite 5 · Tailwind CSS 3 · lucide-react
+
+**中英双语界面**（`i18n.tsx`，`en` / `zh`）。
+
+---
+
+## 跑起来
+
+```bash
+npm install
+npm run dev
+```
+
+打开 http://localhost:3000
+
+> **不需要任何 API Key。** 旧版 README 里提到的 `GEMINI_API_KEY` 是 AI Studio 模板的残留——**这个项目没有用到任何 AI 服务**，依赖里也没有相关 SDK。
+
+---
+
+## 状态
+
+原型停在 v3.0，**前端设计基本走完，后端没有开始**。
+
+要变成能用的东西，缺的是：
+
+- [ ] 真实存储层（本地持久化）
+- [ ] Iroh P2P 接入
+- [ ] Rhai 脚本执行环境
+- [ ] 加密的实际实现
+- [ ] 云盘 Provider 的真实对接
+
+---
+
+## License
+
+暂未指定。
